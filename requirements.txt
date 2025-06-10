@@ -10,7 +10,7 @@ pyautogui>=0.9.54
 Pillow>=10.0.0
 
 # Google Generative AI
-google-generativeai>=0.3.0
+google-genai
 
 # Development Dependencies
 black>=23.0.0

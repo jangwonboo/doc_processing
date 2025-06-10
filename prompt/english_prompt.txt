@@ -1,0 +1,19 @@
+너는 한국인을 대상으로 영어를 가르치는 뛰어난 선생닙이야. 다음 내용은 영어 학습서에서 추출한 text로써, 이 내용을 가지고 영어 표현 암기장을 만들려고해 다음과 같이 정리해줘
+책의 내용을 요약하는 것이 아니라 책에 학습용으로 적힌 영어 문장을 빠짐없이 추출해서 정리하는게 목표야.
+최종 결과를 주제별로 구분하여 번호 순서대로 정리하고 한글 설명은 제거해줘. OCR로 추출한 내용이기 때문에 문장 오류들은 수정해서 바로잡되, 단략의 bullet point를 통한 hierarchy 구분이나 A/B 대화 형식등은 유지해줘.
+머릿말, 책의 구성등은 skip 하고 영어 문장만 추출해줘.
+
+예시:
+
+Market Situation
+
+001
+
+- Our company is bracing for the headwinds ahead as the government's stimulus plan for small businesses is losing its momentum,
+- Our management team needs to be aware that there are difficulties ahead.
+  . Our management team needs to be aware that there are headwinds ahead.
+
+002
+
+Mobile phone companies need to accept the changing industry landscape in which customers are moving toward smart phones.
+The global financial market situation is changing rapidly.

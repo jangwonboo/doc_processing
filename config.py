@@ -1,5 +1,9 @@
 """Configuration settings for the Gemini API summarization script."""
+import os
 from pathlib import Path
+
+# Gemini API Configuration
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # API Configuration
 MODEL_NAME = "gemini-2.5-flash-preview-05-20"
@@ -30,4 +34,4 @@ GENERATION_CONFIG = {
     "response_mime_type": "text/plain"  # Ensure text output
 }
 
-PROMPT_FILE = Path("prompt/basic_prompt.txt")
+PROMPT_FILE = Path("prompt/newneek_prompt.txt")
