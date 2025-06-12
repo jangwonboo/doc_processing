@@ -141,6 +141,9 @@ if __name__ == '__main__':
     import argparse
     from pathlib import Path
     
+    # Define log levels for argument parser
+    LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+    
     # Set up argument parser
     supported_input = ['txt', 'md', 'text', 'log']
     

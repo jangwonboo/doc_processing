@@ -98,7 +98,7 @@ class WindowCapture:
     @staticmethod
     def get_window_info(app_name=None, window_title=None):
         """
-        Return window info only if app_name or title is an exact match (case-insensitive).
+        Return window info only if window_title is an exact match (case-insensitive).
         Uses AppleScript for window enumeration, as this is not possible natively in Python on macOS.
         """
         if not WindowCapture.check_dependencies():
@@ -146,16 +146,15 @@ class WindowCapture:
                 try:
                     proc_name, win_name, x, y, w, h = parts
                     x, y, w, h = int(float(x)), int(float(y)), int(float(w)), int(float(h))
+                    logger.info(f"Found window: {proc_name} - {win_name}  ({x},{y}) {w}x{h}")
                     windows.append((proc_name, win_name, x, y, w, h))
                 except Exception:
                     continue
-        # Only exact match (case-insensitive) to avoid ambiguity and ensure user intent.
+        # Only exact match by window title (case-insensitive) to avoid ambiguity and ensure user intent.
         for proc_name, win_name, x, y, w, h in windows:
             try:
                 # Convert all coordinates to integers
                 x, y, w, h = int(round(float(x))), int(round(float(y))), int(round(float(w))), int(round(float(h)))
-                if app_name and proc_name.lower() == app_name.lower():
-                    return (proc_name, win_name, x, y, w, h)
                 if window_title and win_name.lower() == window_title.lower():
                     return (proc_name, win_name, x, y, w, h)
             except (ValueError, TypeError) as e:
@@ -188,7 +187,7 @@ class WindowCapture:
             # Ensure all parameters are integers
             x = int(x)
             y = int(y)
-            width = int(width) /3 
+            width = int(int(width) / 3)  # Convert to int after division
             height = int(height)
             
             # Validate dimensions

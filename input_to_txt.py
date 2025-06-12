@@ -8,6 +8,7 @@ It focuses only on text extraction without summarization.
 
 import os
 import sys
+import json
 import logging
 import tempfile
 import subprocess
@@ -199,11 +200,52 @@ class TextExtractor:
             logger.info(f"Response: {response}")
         # Write to file as we receive chunks
         with open(output_path, 'w', encoding='utf-8') as f_out:
-            for chunk in response:
-                if hasattr(chunk, 'text') and chunk.text is not None:
-                    f_out.write(chunk.text)
-                    f_out.flush()
-                    print(chunk.text, end='', flush=True)
+            content_saved = False
+            try:
+                # First attempt: process as a normal stream
+                for chunk in response:
+                    if hasattr(chunk, 'text') and chunk.text is not None:
+                        f_out.write(chunk.text)
+                        f_out.flush()
+                        print(chunk.text, end='', flush=True)
+                        content_saved = True
+            except json.JSONDecodeError as json_err:
+                logger.error(f"JSON parsing error in response: {json_err}")
+                # If we got some content before the error, keep it
+                if content_saved:
+                    logger.info("Partial content was saved before the JSON error occurred")
+                else:
+                    # Try alternative approach: access the raw response data
+                    logger.info("Attempting to recover from JSON error by processing raw response...")
+                    try:
+                        # Try to access the raw response data if available
+                        if hasattr(response, '_raw_response') and hasattr(response._raw_response, 'text'):
+                            raw_text = response._raw_response.text
+                            # Try to extract content from raw response
+                            # Look for text content between quotes after "text": pattern
+                            import re
+                            text_matches = re.findall(r'"text"\s*:\s*"([^"]+)"', raw_text)
+                            if text_matches:
+                                for match in text_matches:
+                                    # Unescape any escaped characters
+                                    clean_text = bytes(match, 'utf-8').decode('unicode_escape')
+                                    f_out.write(clean_text)
+                                    f_out.flush()
+                                    print(clean_text, end='', flush=True)
+                                    content_saved = True
+                            else:
+                                logger.warning("Could not extract text content from raw response")
+                        else:
+                            logger.warning("Raw response data not available")
+                    except Exception as raw_err:
+                        logger.error(f"Error processing raw response: {raw_err}")
+            except Exception as e:
+                logger.error(f"Error processing response chunks: {e}")
+                
+            # If no content was saved through any method, write an error message
+            if not content_saved:
+                f_out.write(f"Error processing document. The API response could not be parsed correctly.\n")
+                f_out.flush()
         # Clean up the uploaded file
         try:
             if hasattr(uploaded_file, 'id'):
