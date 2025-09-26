@@ -14,6 +14,7 @@ import argparse
 import subprocess
 from pathlib import Path
 import logging
+import re
 
 # Configure logging
 logging.basicConfig(
@@ -21,6 +22,25 @@ logging.basicConfig(
     format='%(asctime)s [%(lineno)d] %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+def natural_sort_key(path):
+    """
+    자연스러운 정렬을 위한 키 함수 (숫자 순서 고려)
+    Natural sorting key function that considers numeric order
+    
+    Args:
+        path: Path 객체 또는 문자열
+        
+    Returns:
+        list: 정렬을 위한 키 리스트
+    """
+    if isinstance(path, Path):
+        text = path.name
+    else:
+        text = str(path)
+    
+    # 숫자와 문자를 분리하여 정렬 키 생성
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r'(\d+)', text)]
 
 def run_tesseract(input_path, output_path, lang, tess_path):
     """
@@ -53,6 +73,86 @@ def run_tesseract(input_path, output_path, lang, tess_path):
     
     return output_path, text_path
 
+def check_pdf_integrity(pdf_path):
+    """PDF 파일의 무결성을 검사합니다."""
+    try:
+        from PyPDF2 import PdfReader
+    except ImportError:
+        logger.error("PyPDF2가 필요합니다. pip install PyPDF2")
+        sys.exit(1)
+    
+    try:
+        with open(pdf_path, 'rb') as f:
+            reader = PdfReader(f)
+            num_pages = len(reader.pages)
+            if num_pages > 0:
+                first_page = reader.pages[0]
+                _ = first_page.extract_text()
+        return True, f"정상 ({num_pages}페이지)"
+    except Exception as e:
+        return False, str(e)
+
+def find_corresponding_image(pdf_path):
+    """PDF 파일에 대응하는 이미지 파일을 찾습니다."""
+    base_name = pdf_path.stem
+    image_extensions = ['.png', '.jpg', '.jpeg']
+    
+    for ext in image_extensions:
+        image_path = pdf_path.parent / (base_name + ext)
+        if image_path.exists():
+            return image_path
+    return None
+
+def repair_corrupted_pdf(pdf_path):
+    """손상된 PDF 파일을 이미지에서 다시 생성합니다."""
+    image_path = find_corresponding_image(pdf_path)
+    
+    if not image_path:
+        logger.warning(f"이미지 파일을 찾을 수 없어 복구 불가: {pdf_path.stem}")
+        return False
+    
+    logger.info(f"손상된 PDF 복구 시도: {pdf_path.name} <- {image_path.name}")
+    
+    backup_pdf = pdf_path.with_suffix('.pdf.backup')
+    backup_txt = pdf_path.with_suffix('.txt.backup')
+    
+    try:
+        if pdf_path.exists():
+            pdf_path.rename(backup_pdf)
+        
+        txt_path = pdf_path.with_suffix('.txt')
+        if txt_path.exists():
+            txt_path.rename(backup_txt)
+        
+        new_pdf, new_txt = run_tesseract(image_path, pdf_path, 'kor+eng+chi_tra', 'tesseract')
+        
+        if new_pdf.exists() and new_txt.exists():
+            is_valid, message = check_pdf_integrity(new_pdf)
+            if is_valid:
+                logger.info(f"PDF 복구 성공: {pdf_path.name} - {message}")
+                if backup_pdf.exists():
+                    backup_pdf.unlink()
+                if backup_txt.exists():
+                    backup_txt.unlink()
+                return True
+            else:
+                logger.error(f"복구된 PDF도 손상됨: {message}")
+                return False
+        else:
+            logger.error(f"파일 생성 실패")
+            return False
+            
+    except Exception as e:
+        logger.error(f"PDF 복구 중 오류: {e}")
+        try:
+            if backup_pdf.exists() and not pdf_path.exists():
+                backup_pdf.rename(pdf_path)
+            if backup_txt.exists() and not txt_path.exists():
+                backup_txt.rename(txt_path)
+        except Exception as restore_error:
+            logger.error(f"백업 복원 실패: {restore_error}")
+        return False
+
 def merge_pdfs(pdf_files, merged_path):
     """
     여러 PDF 파일을 하나로 병합합니다.
@@ -71,14 +171,55 @@ def merge_pdfs(pdf_files, merged_path):
     except ImportError:
         logger.error("PyPDF2가 필요합니다. pip install PyPDF2")
         sys.exit(1)
+    
     merger = PdfMerger()
-    for pdf in sorted(pdf_files, key=lambda x: str(x)):
-        with open(pdf, 'rb') as f:
-            merger.append(f)
-    merger.write(str(merged_path))
-    merger.close()
-    logger.info(f"병합 PDF 저장: {merged_path}")
-    return merged_path
+    successful_merges = 0
+    failed_files = []
+    repaired_files = []
+    
+    for pdf in sorted(pdf_files, key=natural_sort_key):
+        try:
+            with open(pdf, 'rb') as f:
+                merger.append(f)
+                successful_merges += 1
+        except Exception as e:
+            logger.warning(f"PDF 병합 실패: {pdf} - {e}")
+            
+            # 손상된 PDF 복구 시도
+            if repair_corrupted_pdf(pdf):
+                try:
+                    with open(pdf, 'rb') as f:
+                        merger.append(f)
+                        successful_merges += 1
+                        repaired_files.append(pdf)
+                        logger.info(f"복구 후 병합 성공: {pdf.name}")
+                except Exception as retry_error:
+                    logger.error(f"복구 후에도 병합 실패: {pdf} - {retry_error}")
+                    failed_files.append(pdf)
+            else:
+                failed_files.append(pdf)
+            continue
+    
+    if successful_merges == 0:
+        logger.error("병합할 수 있는 PDF 파일이 없습니다.")
+        return None
+    
+    try:
+        merger.write(str(merged_path))
+        merger.close()
+        logger.info(f"병합 PDF 저장: {merged_path} ({successful_merges}개 파일 병합)")
+        
+        if repaired_files:
+            logger.info(f"복구된 파일 {len(repaired_files)}개: {[f.name for f in repaired_files[:5]]}")
+        
+        if failed_files:
+            logger.warning(f"병합 실패한 파일 {len(failed_files)}개: {[f.name for f in failed_files[:5]]}")
+            
+        return merged_path
+    except Exception as e:
+        logger.error(f"PDF 병합 저장 실패: {e}")
+        merger.close()
+        return None
 
 
 def merge_text_files(text_files, merged_path):
@@ -95,7 +236,7 @@ def merge_text_files(text_files, merged_path):
     Merge multiple text files into a single text file.
     """
     with open(merged_path, 'w', encoding='utf-8') as outfile:
-        for i, text_file in enumerate(sorted(text_files, key=lambda x: str(x))):
+        for i, text_file in enumerate(sorted(text_files, key=natural_sort_key)):
 
             # 파일 내용 추가
             try:
@@ -149,6 +290,9 @@ def main():
                       choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                       help='로그 레벨 (Log level, default: INFO)')
     
+    parser.add_argument('--ocr', action='store_true',
+                      help='OCR 변환 (OCR conversion)') 
+    
     args = parser.parse_args()
     
     # Set up basic logging configuration
@@ -190,11 +334,19 @@ def main():
         output_dir.mkdir(exist_ok=True)
         
         # Get all supported image files
-        png_files = []
+        image_files = []
         for ext in supported_input:
-            png_files.extend(input_path.glob(f'*.{ext}'))
-            png_files.extend(input_path.glob(f'*.{ext.upper()}'))
-        png_files = sorted(list(set(png_files)))  # Remove duplicates
+            image_files.extend(input_path.glob(f'*.{ext}'))
+            image_files.extend(input_path.glob(f'*.{ext.upper()}'))
+        
+        # Remove duplicates and sort naturally (considering numeric order)
+        image_files = list(set(image_files))
+        image_files = sorted(image_files, key=natural_sort_key)
+        
+        logger.info(f"발견된 이미지 파일 수: {len(image_files)}")
+        if image_files:
+            logger.info(f"처리 순서: {[f.name for f in image_files[:5]]}" + 
+                       (f" ... (총 {len(image_files)}개)" if len(image_files) > 5 else ""))
         # 생성된 PDF와 텍스트 파일 경로를 저장할 리스트
         generated_pdfs = []
         generated_texts = []
@@ -208,21 +360,21 @@ def main():
             logger.info(f"이미 병합된 파일이 존재합니다: {merged_pdf_path} 및 {merged_text_path} → 건너뜀")
             return
         
-        for png in png_files:
-            pdf_path = output_dir / (png.stem + '.pdf')
-            text_path = output_dir / (png.stem + '.txt')
+        for image_file in image_files:
+            pdf_path = output_dir / (image_file.stem + '.pdf')
+            text_path = output_dir / (image_file.stem + '.txt')
             
             if pdf_path.exists() and text_path.exists():
                 logger.info(f"이미 존재: {pdf_path} 및 {text_path} → 건너뜀")
                 generated_pdfs.append(pdf_path)
                 generated_texts.append(text_path)
             else:
-                pdf_result, text_result = run_tesseract(png, pdf_path, 'kor+eng+chi_tra', 'tesseract')
+                pdf_result, text_result = run_tesseract(image_file, pdf_path, 'kor+eng+chi_tra', 'tesseract')
                 generated_pdfs.append(pdf_result)
                 generated_texts.append(text_result)
         
-        # PDF 파일 병합
-        all_pdfs = sorted(generated_pdfs, key=lambda x: str(x))
+        # PDF 파일 병합 (자연스러운 정렬 적용)
+        all_pdfs = sorted(generated_pdfs, key=natural_sort_key)
         if not all_pdfs:
             logger.warning(f"병합할 PDF 파일이 없습니다: {output_dir}")
         else:
@@ -230,8 +382,8 @@ def main():
             merged_pdf_path = output_dir / f"{input_path.name}.pdf"
             merge_pdfs(all_pdfs, merged_pdf_path)
             
-            # 텍스트 파일 병합
-            all_texts = sorted(generated_texts, key=lambda x: str(x))
+            # 텍스트 파일 병합 (자연스러운 정렬 적용)
+            all_texts = sorted(generated_texts, key=natural_sort_key)
             if all_texts:
                 merged_text_path = output_dir / f"{input_path.name}.txt"
                 merge_text_files(all_texts, merged_text_path)
